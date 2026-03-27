@@ -1,0 +1,301 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{Prosit 2 -- Machine Learning\\{\large De la donn\'ee brute au Perceptron Multi-Couches}}
+\author{Prosit 2 -- Machine Learning}
+\date{Mars 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\part{Pr\'eparation des donn\'ees}
+% ============================================================
+
+\section{Objectif}
+
+Transformer le dataset brut \texttt{housing.csv} (20\,640 lignes, 10 colonnes) en un fichier pr\^et pour l'entra\^inement d'un perceptron : \texttt{amputed\_normalized\_housing\_data.csv}.
+
+Pipeline : imputation KNN $\to$ encodage ordinal $\to$ nettoyage outliers $\to$ normalisation Z-Score.
+
+\section{\'Etape 1 -- Imputation KNN}
+
+La colonne \texttt{total\_bedrooms} contient 207 valeurs manquantes. On les comble par KNN ($k=5$, pond\'eration par distance inverse) :
+
+\begin{equation}
+\hat{x}_i = \frac{\sum_{j \in \mathcal{N}_k(i)} w_j \cdot x_j}{\sum_{j \in \mathcal{N}_k(i)} w_j}, \quad w_j = \frac{1}{d(i,j)}
+\end{equation}
+
+Les donn\'ees sont standardis\'ees temporairement avant KNN pour que la distance euclidienne soit coh\'erente entre colonnes d'\'echelles diff\'erentes, puis d\'e-standardis\'ees apr\`es imputation.
+
+\section{\'Etape 2 -- Encodage ordinal de \texttt{ocean\_proximity}}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Cat\'egorie} & \textbf{Valeur} \\
+\midrule
+\texttt{<1H OCEAN}  & 0 \\
+\texttt{INLAND}     & 1 \\
+\texttt{ISLAND}     & 2 \\
+\texttt{NEAR BAY}   & 3 \\
+\texttt{NEAR OCEAN} & 4 \\
+\bottomrule
+\end{tabular}
+\caption{Encodage ordinal de \texttt{ocean\_proximity}}
+\end{table}
+
+Cet encodage est r\'ealis\'e \textbf{avant} l'imputation KNN (KNNImputer requiert des donn\'ees num\'eriques).
+
+\section{\'Etape 3 -- Nettoyage des outliers}
+
+Deux types de nettoyage sont appliqu\'es apr\`es imputation :
+
+\subsection{Suppression des prix plafonn\'es}
+
+965 lignes avec \texttt{median\_house\_value} $= 500\,001$\,\$ sont supprim\'ees. Ces valeurs sont \textbf{censur\'ees} (le prix r\'eel est sup\'erieur mais non enregistr\'e), ce qui biaiserait l'apprentissage.
+
+\subsection{Suppression des outliers IQR}
+
+Pour chaque feature num\'erique (sauf \texttt{ocean\_proximity} et \texttt{median\_house\_value}), on supprime les lignes dont la valeur est en dehors de l'intervalle :
+
+\begin{equation}
+[Q_1 - 1.5 \times IQR,\; Q_3 + 1.5 \times IQR]
+\end{equation}
+
+o\`u $IQR = Q_3 - Q_1$ est l'\'ecart interquartile.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrc}
+\toprule
+\textbf{Feature} & \textbf{Outliers} & \textbf{Bornes} \\
+\midrule
+\texttt{total\_rooms}    & 1\,251 & $[-1085, 5643]$ \\
+\texttt{total\_bedrooms} & 1\,227 & $[-230, 1175]$ \\
+\texttt{population}      & 1\,126 & $[-629, 3171]$ \\
+\texttt{households}      & 1\,165 & $[-204, 1092]$ \\
+\texttt{median\_income}  & 364    & $[-0.6, 7.7]$ \\
+\bottomrule
+\end{tabular}
+\caption{Outliers d\'etect\'es par feature (m\'ethode IQR)}
+\end{table}
+
+\textbf{Bilan} : 3\,039 lignes supprim\'ees (14.7\%), \textbf{17\,601 lignes restantes}.
+
+\section{\'Etape 4 -- Normalisation Z-Score}
+
+Toutes les features sauf \texttt{median\_house\_value} (variable cible) sont normalis\'ees :
+
+\begin{equation}
+z = \frac{x - \mu}{\sigma}
+\end{equation}
+
+\textbf{Justification} : le perceptron calcule $\hat{y} = f(\mathbf{w}^T \mathbf{x} + b)$. Sans normalisation, les features \`a grande \'echelle (\texttt{total\_rooms} $\sim 2000$) domineraient le gradient face aux petites (\texttt{median\_income} $\sim 4$).
+
+\texttt{median\_house\_value} n'est pas transform\'ee car c'est la cible de la r\'egression.
+
+\section{Sch\'ema du dataset final}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Colonne} & \textbf{Transformation} \\
+\midrule
+\texttt{longitude}            & Z-Score \\
+\texttt{latitude}             & Z-Score \\
+\texttt{housing\_median\_age} & Z-Score \\
+\texttt{total\_rooms}         & Z-Score \\
+\texttt{total\_bedrooms}      & KNN + Z-Score \\
+\texttt{population}           & Z-Score \\
+\texttt{households}           & Z-Score \\
+\texttt{median\_income}       & Z-Score \\
+\texttt{median\_house\_value} & \textbf{Non (cible)} \\
+\texttt{ocean\_proximity}     & Ordinal + Z-Score \\
+\bottomrule
+\end{tabular}
+\caption{Sch\'ema de \texttt{amputed\_normalized\_housing\_data.csv} -- 17\,601 lignes, 10 colonnes}
+\end{table}
+
+% ============================================================
+\part{Mod\'elisation -- Perceptron Multi-Couches}
+% ============================================================
+
+\section{Analyse de colin\'earit\'e}
+
+Avant l'entra\^inement, on supprime les features redondantes (corr\'elation $|r| > 0.8$). Pour chaque paire colin\'eaire, on conserve la feature la mieux corr\'el\'ee avec la cible.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llcl}
+\toprule
+\textbf{Feature A} & \textbf{Feature B} & $|r|$ & \textbf{Supprim\'ee} \\
+\midrule
+longitude      & latitude        & 0.925 & longitude \\
+total\_rooms   & total\_bedrooms & 0.930 & total\_bedrooms \\
+total\_rooms   & population      & 0.857 & population \\
+total\_rooms   & households      & 0.918 & households \\
+total\_bedrooms & population     & 0.878 & population \\
+total\_bedrooms & households     & 0.980 & total\_bedrooms \\
+population     & households      & 0.907 & population \\
+\bottomrule
+\end{tabular}
+\caption{Paires colin\'eaires et features supprim\'ees}
+\end{table}
+
+\textbf{Features conserv\'ees (5)} : \texttt{latitude}, \texttt{housing\_median\_age}, \texttt{total\_rooms}, \texttt{median\_income}, \texttt{ocean\_proximity}.
+
+\textbf{Features supprim\'ees (4)} : \texttt{longitude}, \texttt{total\_bedrooms}, \texttt{population}, \texttt{households}.
+
+\section{S\'eparation Train / Test}
+
+Le dataset (17\,601 lignes apr\`es nettoyage) est divis\'e al\'eatoirement (\texttt{random\_state=42}) :
+
+\begin{itemize}
+    \item \textbf{Train} : 12\,320 \'echantillons (70\%)
+    \item \textbf{Test} : 5\,281 \'echantillons (30\%)
+\end{itemize}
+
+\section{Architecture du MLP}
+
+Perceptron multi-couches \`a 2 couches cach\'ees :
+
+\begin{center}
+\textbf{5} (entr\'ee) $\to$ \textbf{64} (ReLU) $\to$ \textbf{32} (ReLU) $\to$ \textbf{1} (sortie, identit\'e)
+\end{center}
+
+Propagation avant :
+\begin{align}
+h_1 &= \text{ReLU}(W_1 x + b_1) \\
+h_2 &= \text{ReLU}(W_2 h_1 + b_2) \\
+\hat{y} &= W_3 h_2 + b_3
+\end{align}
+
+O\`u $\text{ReLU}(z) = \max(0, z)$.
+
+\textbf{Hyperparam\`etres} :
+\begin{itemize}
+    \item Optimiseur : Adam (learning rate = 0.001)
+    \item Loss : MSE (Mean Squared Error)
+    \item Early stopping sur 10\% de validation
+    \item Max 500 epochs --- converg\'e en \textbf{271 epochs}
+    \item Nombre total de poids : \textbf{2\,497}
+\end{itemize}
+
+% ============================================================
+\part{\'Evaluation du mod\`ele}
+% ============================================================
+
+\section{M\'etriques utilis\'ees}
+
+C'est un probl\`eme de \textbf{r\'egression}, pas de classification : il n'y a pas de << pr\'ecision >> (\textit{accuracy}) au sens classique. On utilise 4 m\'etriques compl\'ementaires.
+
+\subsection{MAE -- Mean Absolute Error}
+
+\begin{equation}
+\text{MAE} = \frac{1}{n}\sum_{i=1}^{n} |y_i - \hat{y}_i|
+\end{equation}
+
+\textbf{\'Echelle} : dollars (\$). Erreur moyenne en valeur absolue --- robuste aux outliers.
+
+\subsection{RMSE -- Root Mean Squared Error}
+
+\begin{equation}
+\text{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^{n} (y_i - \hat{y}_i)^2}
+\end{equation}
+
+\textbf{\'Echelle} : dollars (\$). P\'enalise les grosses erreurs plus fortement que la MAE (effet quadratique).
+
+\subsection{MAPE -- Mean Absolute Percentage Error}
+
+\begin{equation}
+\text{MAPE} = \frac{100}{n}\sum_{i=1}^{n} \left|\frac{y_i - \hat{y}_i}{y_i}\right|
+\end{equation}
+
+\textbf{\'Echelle} : pourcentage (\%). Erreur relative --- ind\'ependante de l'\'echelle des prix. On peut l'interpr\'eter comme : << en moyenne, le mod\`ele se trompe de X\% du prix r\'eel >>.
+
+\subsection{R\textsuperscript{2} -- Coefficient de d\'etermination}
+
+\begin{equation}
+R^2 = 1 - \frac{\sum_{i=1}^{n}(y_i - \hat{y}_i)^2}{\sum_{i=1}^{n}(y_i - \bar{y})^2}
+\end{equation}
+
+\textbf{\'Echelle} : sans unit\'e, entre 0 et 1. Part de la variance du prix expliqu\'ee par le mod\`ele. C'est la m\'etrique la plus proche d'une << pr\'ecision >> pour la r\'egression.
+
+\section{R\'esultats}
+
+\subsection{Avant nettoyage (20\,640 lignes)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+& \textbf{MAE (\$)} & \textbf{RMSE (\$)} & \textbf{MAPE (\%)} & \textbf{R\textsuperscript{2}} \\
+\midrule
+Train (70\%) & 52\,455 & 73\,146 & 29.85 & 0.60 \\
+Test (30\%)  & 52\,183 & 72\,690 & 29.97 & 0.60 \\
+\bottomrule
+\end{tabular}
+\caption{Performance avant nettoyage des outliers}
+\end{table}
+
+\subsection{Apr\`es nettoyage (17\,601 lignes)}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+& \textbf{MAE (\$)} & \textbf{RMSE (\$)} & \textbf{MAPE (\%)} & \textbf{R\textsuperscript{2}} \\
+\midrule
+Train (70\%) & 45\,840 & 62\,841 & 28.24 & 0.56 \\
+Test (30\%)  & 46\,288 & 63\,958 & 27.98 & 0.55 \\
+\bottomrule
+\end{tabular}
+\caption{Performance apr\`es nettoyage des outliers}
+\end{table}
+
+\subsection{Comparaison}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{M\'etrique (test)} & \textbf{Avant} & \textbf{Apr\`es} & \textbf{Am\'elioration} \\
+\midrule
+MAE (\$)  & 52\,183 & 46\,288 & $-$11.3\% \\
+RMSE (\$) & 72\,690 & 63\,958 & $-$12.0\% \\
+MAPE (\%) & 29.97   & 27.98   & $-$2.0 pts \\
+R\textsuperscript{2} & 0.60 & 0.55 & $-$0.05 \\
+\bottomrule
+\end{tabular}
+\caption{Impact du nettoyage des outliers sur la performance}
+\end{table}
+
+\section{Comment lire ces r\'esultats ?}
+
+\begin{itemize}
+    \item \textbf{MAE et RMSE en baisse} : le mod\`ele fait des erreurs plus petites en valeur absolue ($-$12\% de RMSE). C'est l'am\'elioration la plus concr\`ete.
+    \item \textbf{MAPE en baisse (28\%)} : en moyenne, la pr\'ediction s'\'ecarte de 28\% du prix r\'eel, soit une << pr\'ecision relative >> d'environ \textbf{72\%}.
+    \item \textbf{R\textsuperscript{2} l\'eg\`erement plus bas (0.55 vs 0.60)} : normal --- en supprimant les outliers, on r\'eduit la variance totale des prix. Le d\'enominateur de $R^2$ diminue, donc le ratio peut baisser m\^eme si les erreurs absolues sont plus petites. La MAE et le RMSE sont de meilleurs indicateurs ici.
+    \item \textbf{Train $\approx$ Test} : pas de sur-apprentissage.
+\end{itemize}
+
+\section{Limites identifi\'ees}
+
+\begin{itemize}
+    \item 4 features supprim\'ees par colin\'earit\'e --- un mod\`ele non-lin\'eaire pourrait en tirer plus d'information.
+    \item Seules 5 features utilis\'ees --- des donn\'ees suppl\'ementaires (surface, nombre de pi\`eces, quartier) am\'elioreraient la pr\'ediction.
+    \item Le seuil IQR ($1.5 \times$) est un choix conservateur ; un seuil plus souple ($2 \times$ ou $3 \times$) garderait plus de donn\'ees.
+\end{itemize}
+
+\end{document}
