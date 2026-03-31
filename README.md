@@ -17,7 +17,7 @@ datasets/               # Données brutes et transformées
 models/                 # Modèle MLP exporté (.joblib) + scaler
 data_transform.ipynb    # Pipeline de transformation (KNN imputation, outliers, Z-Score)
 WS_Regression.ipynb     # Workshop de référence sur la régression
-fusion_notebook.ipynb    # Notebook de synthèse avec résultats
+fusion_notebook.ipynb   # Notebook de synthèse avec résultats
 predict.py              # Script interactif de prédiction
 ```
 
